@@ -5,8 +5,8 @@ const (
 	EOF     = "EOF"
 
 	// Identifiers + Literals
-	INDENT = "INDENT"
-	INT    = "INT"
+	IDENT = "IDENT"
+	INT   = "INT"
 
 	// Operators
 	ASSIGN = "="
@@ -31,4 +31,20 @@ type TokenType string
 type Token struct {
 	Type    TokenType
 	Literal string
+}
+
+func NewToken(tokenType TokenType, ch byte) Token {
+	return Token{Type: tokenType, Literal: string(ch)}
+}
+
+var keywords = map[string]TokenType{
+	"fn":  FUNCTION,
+	"let": LET,
+}
+
+func LookupIndent(indent string) TokenType {
+	if tok, ok := keywords[indent]; ok {
+		return tok
+	}
+	return IDENT
 }
