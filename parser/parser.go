@@ -2,6 +2,7 @@ package parser
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/alfiehiscox/monkey-go/ast"
 	"github.com/alfiehiscox/monkey-go/lexer"
@@ -24,6 +25,17 @@ type (
 	infixParsefn  func(ast.Expression) ast.Expression
 )
 
+var precedences = map[token.TokenType]int{
+	token.EQ:      EQUALS,
+	token.NOT_EQ:  EQUALS,
+	token.LT:      LESSGREATER,
+	token.GT:      LESSGREATER,
+	token.PLUS:    SUM,
+	token.MINUS:   SUM,
+	token.SLASH:   PRODUCT,
+	token.ASTERIX: PRODUCT,
+}
+
 type Parser struct {
 	l *lexer.Lexer
 
@@ -41,9 +53,22 @@ func New(l *lexer.Lexer) *Parser {
 		l:              l,
 		errors:         []string{},
 		prefixParseFns: make(map[token.TokenType]prefixParsefn),
+		infixParseFns:  make(map[token.TokenType]infixParsefn),
 	}
 
 	p.registerPrefixParseFn(token.IDENT, p.parseIdentifier)
+	p.registerPrefixParseFn(token.INT, p.parseIntegerLiteral)
+	p.registerPrefixParseFn(token.BANG, p.parsePrefixExpresssion)
+	p.registerPrefixParseFn(token.MINUS, p.parsePrefixExpresssion)
+
+	p.registerInfixParseFn(token.PLUS, p.parseInfixExpression)
+	p.registerInfixParseFn(token.MINUS, p.parseInfixExpression)
+	p.registerInfixParseFn(token.SLASH, p.parseInfixExpression)
+	p.registerInfixParseFn(token.ASTERIX, p.parseInfixExpression)
+	p.registerInfixParseFn(token.GT, p.parseInfixExpression)
+	p.registerInfixParseFn(token.LT, p.parseInfixExpression)
+	p.registerInfixParseFn(token.EQ, p.parseInfixExpression)
+	p.registerInfixParseFn(token.NOT_EQ, p.parseInfixExpression)
 
 	p.nextToken()
 	p.nextToken()
@@ -135,9 +160,21 @@ func (p *Parser) parseExpressionStatement() *ast.ExpressionStatement {
 func (p *Parser) parseExpression(precedence int) ast.Expression {
 	prefix := p.prefixParseFns[p.curToken.Type]
 	if prefix == nil {
+		p.noPrefixParseFnError(p.curToken.Type)
 		return nil
 	}
 	leftExp := prefix()
+
+	for !p.peekTokenIs(token.SEMICOLON) && precedence < p.peekPrecedence() {
+		infix := p.infixParseFns[p.peekToken.Type]
+		if infix == nil {
+			return leftExp
+		}
+
+		p.nextToken()
+
+		leftExp = infix(leftExp)
+	}
 
 	return leftExp
 }
@@ -146,12 +183,58 @@ func (p *Parser) parseIdentifier() ast.Expression {
 	return &ast.Identifier{Token: p.curToken, Value: p.curToken.Literal}
 }
 
+func (p *Parser) parseIntegerLiteral() ast.Expression {
+	lit := &ast.IntegerLiteral{Token: p.curToken}
+
+	value, err := strconv.ParseInt(p.curToken.Literal, 0, 64)
+	if err != nil {
+		msg := fmt.Sprintf("could not parser %s as integer", p.curToken.Literal)
+		p.errors = append(p.errors, msg)
+		return nil
+	}
+
+	lit.Value = value
+
+	return lit
+}
+
+func (p *Parser) parsePrefixExpresssion() ast.Expression {
+	expression := &ast.PrefixExpression{
+		Token:    p.curToken,
+		Operator: p.curToken.Literal,
+	}
+
+	p.nextToken()
+	expression.Right = p.parseExpression(PREFIX)
+
+	return expression
+}
+
+func (p *Parser) parseInfixExpression(left ast.Expression) ast.Expression {
+	exp := &ast.InfixExpression{
+		Token:    p.curToken,
+		Operator: p.curToken.Literal,
+		Left:     left,
+	}
+
+	precedence := p.curPrecedence()
+	p.nextToken()
+	exp.Right = p.parseExpression(precedence)
+
+	return exp
+}
+
 func (p *Parser) registerInfixParseFn(t token.TokenType, fn infixParsefn) {
 	p.infixParseFns[t] = fn
 }
 
 func (p *Parser) registerPrefixParseFn(t token.TokenType, fn prefixParsefn) {
 	p.prefixParseFns[t] = fn
+}
+
+func (p *Parser) noPrefixParseFnError(t token.TokenType) {
+	msg := fmt.Sprintf("no prefix parser function for %s found", p.curToken.Type)
+	p.errors = append(p.errors, msg)
 }
 
 func (p *Parser) curTokenIs(t token.TokenType) bool {
@@ -175,4 +258,19 @@ func (p *Parser) expectPeek(t token.TokenType) bool {
 func (p *Parser) peekError(t token.TokenType) {
 	msg := fmt.Sprintf("expected next token to %s, got %s instead", t, p.peekToken.Type)
 	p.errors = append(p.errors, msg)
+}
+
+func (p *Parser) peekPrecedence() int {
+	if pr, ok := precedences[p.peekToken.Type]; ok {
+		return pr
+	}
+	return LOWEST
+}
+
+func (p *Parser) curPrecedence() int {
+	if pr, ok := precedences[p.curToken.Type]; ok {
+		return pr
+	}
+	return LOWEST
+
 }
